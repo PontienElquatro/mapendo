@@ -5,6 +5,7 @@ import { GenerationParams } from './lib/gemini';
 import fetch from 'node-fetch';
 
 dotenv.config();
+dotenv.config({ path: '.env.local' });
 
 const app = express();
 const port = process.env.PORT || 3001;
