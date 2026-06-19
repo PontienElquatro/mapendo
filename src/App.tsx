@@ -22,24 +22,12 @@ import {
   Check,
   Zap
 } from "lucide-react";
-import { GoogleGenAI } from "@google/genai";
-import { generateLoveImage, generateLoveVideo } from "./lib/gemini";
+import { GenerationParams } from "./lib/gemini";
 import PaymentPage from "./components/PaymentPage";
 import { POEMS_BANK, CATEGORIES, getDailyPoem } from "./data/poems";
 
 // --- Types ---
 type GenerationType = "image" | "video";
-
-interface GenerationParams {
-  sender: string;
-  receiver: string;
-  message: string;
-  theme: string;
-  style: string;
-  font: string;
-  type: GenerationType;
-  customMedia?: string;
-}
 
 // --- Constants ---
 const THEMES = [
@@ -149,11 +137,26 @@ export default function App() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // 1. Check file size (max 5 MB)
+      const MAX_SIZE = 5 * 1024 * 1024;
+      if (file.size > MAX_SIZE) {
+        setError("Le fichier est trop volumineux. La taille maximale est de 5 Mo.");
+        return;
+      }
+
+      // 2. Check file type
+      const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        setError("Format de fichier non supporté. Veuillez utiliser JPG, PNG ou WEBP.");
+        return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64 = reader.result as string;
         setCustomMediaPreview(base64);
         setParams({ ...params, customMedia: base64 });
+        setError(null);
       };
       reader.readAsDataURL(file);
     }
@@ -185,18 +188,10 @@ export default function App() {
       return;
     }
 
-    // Logic for free vs paid
-    // Images inserted by client (customMedia) are free IF shared today
-    // OR if user is Premium
     const isFreeGeneration = (params.customMedia && hasSharedToday) || isPremium;
 
     if (!isFreeGeneration) {
       setShowPaymentModal(true);
-      return;
-    }
-
-    if (params.type === "video" && !hasApiKey) {
-      setError("Une clé API est requise pour générer des vidéos.");
       return;
     }
 
@@ -205,29 +200,29 @@ export default function App() {
     setResultUrl(null);
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY || "";
-      const ai = new GoogleGenAI({ apiKey });
+      const endpoint = params.type === "image" ? "/api/generate-image" : "/api/generate-video";
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(params),
+      });
 
-      let url: string | null = null;
-      if (params.type === "image") {
-        url = await generateLoveImage(ai, params);
-      } else {
-        url = await generateLoveVideo(ai, params);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "La génération a échoué.");
       }
 
-      if (url) {
-        setResultUrl(url);
+      const data = await response.json();
+      if (data.url) {
+        setResultUrl(data.url);
       } else {
         setError("La génération a échoué. Veuillez réessayer.");
       }
     } catch (err: any) {
       console.error(err);
-      if (err.message?.includes("Requested entity was not found")) {
-        setHasApiKey(false);
-        setError("Erreur de clé API. Veuillez sélectionner une clé valide.");
-      } else {
-        setError("Une erreur est survenue lors de la génération.");
-      }
+      setError(err.message || "Une erreur est survenue lors de la génération.");
     } finally {
       setIsGenerating(false);
     }
