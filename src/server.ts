@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { GenerationParams } from './lib/gemini';
 import fetch from 'node-fetch';
+import { v4 as uuidv4 } from 'uuid';
+import rateLimit from 'express-rate-limit';
 
 dotenv.config();
 dotenv.config({ path: '.env.local' });
@@ -10,17 +12,67 @@ dotenv.config({ path: '.env.local' });
 const app = express();
 const port = process.env.PORT || 3001;
 
+// --- Config & State (In-memory for demo, should be DB in prod) ---
+const PREMIUM_TOKENS = new Set<string>();
+
+const BASE_PRICES = {
+  monthly: 9.99,
+  yearly: 79.99,
+  singleImage: 0.50,
+  singleVideo: 2.50
+};
+
+// --- Middleware ---
 app.use(express.json({ limit: '10mb' }));
 
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) {
-  console.error('GEMINI_API_KEY is not set in environment variables');
-}
-const genAI = new GoogleGenAI({ apiKey: apiKey || '' });
+// Rate limiting to prevent abuse
+const generationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 generations per window
+  message: { error: 'Trop de tentatives de génération. Veuillez réessayer dans 15 minutes.' }
+});
 
-app.post('/api/generate-image', async (req, res) => {
+// --- API Endpoints ---
+
+app.get('/api/config', (req, res) => {
+  res.json({
+    prices: BASE_PRICES,
+    currency: "EUR"
+  });
+});
+
+app.post('/api/verify-payment', (req, res) => {
+  const { planId, paymentMethod } = req.body;
+
+  // Simulation of payment validation
+  console.log(`Validating payment for ${planId} via ${paymentMethod}`);
+
+  const token = uuidv4();
+  PREMIUM_TOKENS.add(token);
+
+  res.json({
+    success: true,
+    token: token,
+    message: "Paiement validé avec succès !"
+  });
+});
+
+app.post('/api/generate-image', generationLimiter, async (req, res) => {
   try {
     const params: GenerationParams = req.body;
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.split(' ')[1];
+
+    // Check if user is premium or using free daily share (shared today logic is client side,
+    // but in real app we would check server-side state)
+    const isPremium = token && PREMIUM_TOKENS.has(token);
+    const isFree = params.customMedia; // Simple logic for demo
+
+    if (!isPremium && !isFree) {
+      return res.status(403).json({ error: 'Accès Premium requis pour cette génération.' });
+    }
+
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
     let prompt = `Génère une image romantique de haute qualité pour une déclaration d'amour.
     Thème: ${params.theme}.
@@ -72,15 +124,23 @@ app.post('/api/generate-image', async (req, res) => {
   }
 });
 
-app.post('/api/generate-video', async (req, res) => {
+app.post('/api/generate-video', generationLimiter, async (req, res) => {
   try {
     const params: GenerationParams = req.body;
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.split(' ')[1];
+
+    if (!token || !PREMIUM_TOKENS.has(token)) {
+        return res.status(403).json({ error: 'Accès Premium requis pour la génération vidéo.' });
+    }
+
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
     const prompt = `Une vidéo romantique de 5 secondes pour une déclaration d'amour.
     Thème: ${params.theme}.
     Style visuel: ${params.style}.
     Action: Une scène douce et poétique inspirée par les noms ${params.sender} et ${params.receiver}.
-    Ambiance: Amour pur, tendresse.
+    Ambiance: Amour pur, tantresse.
     Format: Portrait (9:16), idéal pour TikTok ou Reels.`;
 
     const videoParams: any = {
@@ -125,7 +185,7 @@ app.post('/api/generate-video', async (req, res) => {
     const response = await fetch(downloadLink, {
       method: "GET",
       headers: {
-        "x-goog-api-key": apiKey || '',
+        "x-goog-api-key": process.env.GEMINI_API_KEY || '',
       },
     });
 

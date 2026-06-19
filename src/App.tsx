@@ -89,27 +89,19 @@ export default function App() {
   const [customMediaPreview, setCustomMediaPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Check for API key and handle daily quota
+  // Check for Premium token and handle daily quota
   useEffect(() => {
-    const checkKey = async () => {
-      if ((window as any).aistudio?.hasSelectedApiKey) {
-        const selected = await (window as any).aistudio.hasSelectedApiKey();
-        setHasApiKey(selected);
-      } else {
-        setHasApiKey(true);
-      }
-    };
-    checkKey();
+    setHasApiKey(true); // Handled by backend now
 
     // Sharing Logic
     const today = new Date().toDateString();
     const sharedDate = localStorage.getItem("mapendo_shared_date");
-    const premiumStatus = localStorage.getItem("mapendo_is_premium") === "true";
+    const premiumToken = localStorage.getItem("mapendo_premium_token");
     
     if (sharedDate === today) {
       setHasSharedToday(true);
     }
-    if (premiumStatus) {
+    if (premiumToken) {
       setIsPremium(true);
     }
   }, []);
@@ -201,10 +193,13 @@ export default function App() {
 
     try {
       const endpoint = params.type === "image" ? "/api/generate-image" : "/api/generate-video";
+      const token = localStorage.getItem("mapendo_premium_token");
+
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(params),
       });
@@ -242,9 +237,9 @@ export default function App() {
     return (
       <PaymentPage 
         onBack={() => setView("app")} 
-        onPaymentSuccess={() => {
+        onPaymentSuccess={(token) => {
           setIsPremium(true);
-          localStorage.setItem("mapendo_is_premium", "true");
+          if (token) localStorage.setItem("mapendo_premium_token", token);
           setView("app");
         }}
         hasCustomImage={!!params.customMedia}

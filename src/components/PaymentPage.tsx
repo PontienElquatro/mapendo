@@ -68,7 +68,7 @@ const BASE_PRICES = {
 
 interface PaymentPageProps {
   onBack: () => void;
-  onPaymentSuccess: () => void;
+  onPaymentSuccess: (token?: string) => void;
   hasCustomImage: boolean;
   hasCustomText: boolean;
 }
@@ -99,16 +99,35 @@ export default function PaymentPage({ onBack, onPaymentSuccess, hasCustomImage, 
     setSelectedPlan(plan);
   };
 
-  const confirmPayment = () => {
+  const confirmPayment = async () => {
     setIsProcessing(true);
-    // Simulate a local payment process
-    setTimeout(() => {
+
+    try {
+      const response = await fetch('/api/verify-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planId: selectedPlan.name,
+          paymentMethod: 'card'
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setIsProcessing(false);
+        setIsSuccess(true);
+        setTimeout(() => {
+          onPaymentSuccess(data.token);
+        }, 2000);
+      } else {
+        throw new Error(data.error || "Erreur lors de la validation du paiement");
+      }
+    } catch (err) {
+      console.error(err);
       setIsProcessing(false);
-      setIsSuccess(true);
-      setTimeout(() => {
-        onPaymentSuccess();
-      }, 2000);
-    }, 2500);
+      alert("Une erreur est survenue lors du paiement.");
+    }
   };
 
   return (
