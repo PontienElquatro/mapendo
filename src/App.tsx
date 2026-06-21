@@ -207,8 +207,8 @@ export default function App() {
     try {
       const apiKey = process.env.GEMINI_API_KEY;
 
-      if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
-        setError("La clé API Gemini est manquante. Veuillez configurer votre clé dans le panneau Secrets d'AI Studio.");
+      if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey === "undefined" || apiKey === "") {
+        setError("La clé API Gemini est manquante ou invalide. Veuillez configurer votre clé dans le panneau Secrets d'AI Studio.");
         setIsGenerating(false);
         return;
       }
@@ -217,9 +217,9 @@ export default function App() {
 
       let url: string | null = null;
       if (params.type === "image") {
-        url = await generateLoveImage(ai, params);
+        url = await generateLoveImage(ai, params, apiKey);
       } else {
-        url = await generateLoveVideo(ai, params);
+        url = await generateLoveVideo(ai, params, apiKey);
       }
 
       if (url) {
@@ -228,12 +228,16 @@ export default function App() {
         setError("La génération a échoué. Veuillez réessayer.");
       }
     } catch (err: any) {
-      console.error(err);
-      if (err.message?.includes("Requested entity was not found")) {
+      console.error("Generation error details:", err);
+      if (err.message?.includes("Requested entity was not found") || err.message?.includes("404")) {
+        setError("Modèle ou ressource non trouvée (404). Vérifiez la configuration de votre projet.");
+      } else if (err.message?.includes("API key") || err.message?.includes("auth") || err.message?.includes("401")) {
         setHasApiKey(false);
-        setError("Erreur de clé API. Veuillez sélectionner une clé valide.");
+        setError("Clé API manquante ou invalide. Veuillez configurer votre clé dans AI Studio.");
+      } else if (err.message?.includes("quota") || err.message?.includes("429")) {
+        setError("Quota dépassé. Veuillez réessayer plus tard ou utiliser une autre clé.");
       } else {
-        setError("Une erreur est survenue lors de la génération.");
+        setError(`Une erreur est survenue : ${err.message || "Erreur inconnue"}`);
       }
     } finally {
       setIsGenerating(false);

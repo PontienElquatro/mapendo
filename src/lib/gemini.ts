@@ -1,4 +1,4 @@
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 export const getAI = (apiKey: string) => {
   return new GoogleGenAI({ apiKey });
@@ -14,49 +14,75 @@ export const generateLoveImage = async (
     style: string;
     font: string;
     customMedia?: string; // base64 string
-  }
+  },
+  apiKey: string
 ) => {
-  const parts: any[] = [];
-  
-  let prompt = `Génère une image romantique de haute qualité pour une déclaration d'amour. 
-  Thème: ${params.theme}. 
-  Style artistique: ${params.style}.
-  Police d'écriture suggérée pour l'ambiance: ${params.font}.
-  Contexte: Une scène romantique montrant ${params.receiver} et ${params.sender}. 
-  Message à inclure visuellement ou suggérer: "${params.message}". 
-  Ambiance: Chaleureuse, émotionnelle. 
-  Format: Carré (1:1), idéal pour Instagram.`;
-
-  if (params.customMedia) {
-    const base64Data = params.customMedia.split(",")[1];
-    const mimeType = params.customMedia.split(";")[0].split(":")[1];
-    
-    parts.push({
-      inlineData: {
-        data: base64Data,
-        mimeType: mimeType,
-      },
-    });
-    prompt += ` UTILISE CETTE IMAGE COMME RÉFÉRENCE VISUELLE. Intègre les personnes ou l'ambiance de cette image dans la nouvelle création romantique tout en respectant le style ${params.style}.`;
-  }
-
-  parts.push({ text: prompt });
-
-  const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
-    contents: {
-      parts: parts,
-    },
-    config: {
-      imageConfig: {
+  try {
+    // We use the new generateImages method for high-quality Imagen 3 generation
+    const response = await (ai as any).models.generateImages({
+      model: "imagen-3.0-generate-001",
+      prompt: `Génère une image romantique de haute qualité pour une déclaration d'amour.
+      Thème: ${params.theme}.
+      Style artistique: ${params.style}.
+      Police d'écriture suggérée pour l'ambiance: ${params.font}.
+      Contexte: Une scène romantique montrant ${params.receiver} et ${params.sender}.
+      Message à inclure visuellement ou suggérer: "${params.message}".
+      Ambiance: Chaleureuse, émotionnelle.
+      Format: Carré (1:1), idéal pour Instagram. ${params.customMedia ? "Utilise l'image fournie comme référence visuelle." : ""}`,
+      config: {
+        numberOfImages: 1,
         aspectRatio: "1:1",
       },
-    },
-  });
+    });
 
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
+    if (response.generatedImages && response.generatedImages[0]) {
+      const img = response.generatedImages[0];
+      if (img.imageBytes) {
+        return `data:image/png;base64,${img.imageBytes}`;
+      }
+    }
+
+    // Fallback to generateContent if generateImages fails or returns empty
+    throw new Error("No image generated with imagen-3.0-generate-001");
+  } catch (err) {
+    console.error("Error with generateImages, falling back to generateContent:", err);
+
+    const parts: any[] = [];
+    let prompt = `Génère une image romantique de haute qualité pour une déclaration d'amour.
+    Thème: ${params.theme}.
+    Style artistique: ${params.style}.
+    Police d'écriture suggérée pour l'ambiance: ${params.font}.
+    Contexte: Une scène romantique montrant ${params.receiver} et ${params.sender}.
+    Message à inclure visuellement ou suggérer: "${params.message}".
+    Ambiance: Chaleureuse, émotionnelle.
+    Format: Carré (1:1), idéal pour Instagram.`;
+
+    if (params.customMedia) {
+      const base64Data = params.customMedia.split(",")[1];
+      const mimeType = params.customMedia.split(";")[0].split(":")[1];
+
+      parts.push({
+        inlineData: {
+          data: base64Data,
+          mimeType: mimeType,
+        },
+      });
+      prompt += ` UTILISE CETTE IMAGE COMME RÉFÉRENCE VISUELLE. Intègre les personnes ou l'ambiance de cette image dans la nouvelle création romantique tout en respectant le style ${params.style}.`;
+    }
+
+    parts.push({ text: prompt });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: {
+        parts: parts,
+      },
+    });
+
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
     }
   }
   return null;
@@ -72,7 +98,8 @@ export const generateLoveVideo = async (
     style: string;
     font: string;
     customMedia?: string; // base64 string
-  }
+  },
+  apiKey: string
 ) => {
   const prompt = `Une vidéo romantique de 5 secondes pour une déclaration d'amour. 
   Thème: ${params.theme}. 
@@ -88,7 +115,7 @@ export const generateLoveVideo = async (
   };
 
   const videoParams: any = {
-    model: "veo-3.1-generate-preview",
+    model: "veo-001",
     prompt: prompt,
     config: config,
   };
@@ -104,25 +131,28 @@ export const generateLoveVideo = async (
     videoParams.prompt += ` Utilise l'image fournie comme point de départ ou référence visuelle pour la vidéo en appliquant un style ${params.style}.`;
   }
 
-  let operation = await ai.models.generateVideos(videoParams);
+  try {
+    let operation = await (ai as any).models.generateVideos(videoParams);
 
-  while (!operation.done) {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    operation = await ai.operations.getVideosOperation({ operation: operation });
+    while (!operation.done) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      operation = await ai.operations.getVideosOperation({ operation: (operation as any).name || operation });
+    }
+
+    const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+    if (!downloadLink) return null;
+
+    const response = await fetch(downloadLink, {
+      method: "GET",
+      headers: {
+        "x-goog-api-key": apiKey,
+      },
+    });
+
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  } catch (err) {
+    console.error("Error generating video:", err);
+    throw err;
   }
-
-  const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-  if (!downloadLink) return null;
-
-  const apiKey = (ai as any).apiKey;
-  
-  const response = await fetch(downloadLink, {
-    method: "GET",
-    headers: {
-      "x-goog-api-key": apiKey,
-    },
-  });
-
-  const blob = await response.blob();
-  return URL.createObjectURL(blob);
 };
