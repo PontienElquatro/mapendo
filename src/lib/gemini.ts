@@ -17,75 +17,67 @@ export const generateLoveImage = async (
   },
   apiKey: string
 ) => {
-  try {
-    // We use the new generateImages method for high-quality Imagen 3 generation
-    const response = await (ai as any).models.generateImages({
-      model: "imagen-3.0-generate-001",
-      prompt: `Génère une image romantique de haute qualité pour une déclaration d'amour.
-      Thème: ${params.theme}.
-      Style artistique: ${params.style}.
-      Police d'écriture suggérée pour l'ambiance: ${params.font}.
-      Contexte: Une scène romantique montrant ${params.receiver} et ${params.sender}.
-      Message à inclure visuellement ou suggérer: "${params.message}".
-      Ambiance: Chaleureuse, émotionnelle.
-      Format: Carré (1:1), idéal pour Instagram. ${params.customMedia ? "Utilise l'image fournie comme référence visuelle." : ""}`,
-      config: {
-        numberOfImages: 1,
-        aspectRatio: "1:1",
-      },
-    });
+  const prompt = `Génère une image romantique de haute qualité pour une déclaration d'amour.
+  Thème: ${params.theme}.
+  Style artistique: ${params.style}.
+  Police d'écriture suggérée pour l'ambiance: ${params.font}.
+  Contexte: Une scène romantique montrant ${params.receiver} et ${params.sender}.
+  Message à inclure visuellement ou suggérer: "${params.message}".
+  Ambiance: Chaleureuse, émotionnelle.
+  Format: Carré (1:1), idéal pour Instagram. ${params.customMedia ? "Utilise l'image fournie comme référence visuelle." : ""}`;
 
-    if (response.generatedImages && response.generatedImages[0]) {
-      const img = response.generatedImages[0];
-      if (img.imageBytes) {
-        return `data:image/png;base64,${img.imageBytes}`;
+  const attempts = [
+    { model: "imagen-3.0-generate-001", method: "generateImages" },
+    { model: "gemini-2.5-flash-image", method: "generateContent" },
+    { model: "gemini-2.0-flash", method: "generateContent" },
+    { model: "gemini-1.5-flash", method: "generateContent" },
+    { model: "gemini-1.5-flash-8b", method: "generateContent" }
+  ];
+
+  let lastError: any = null;
+
+  for (const attempt of attempts) {
+    try {
+      console.log(`Trying image generation with ${attempt.model}...`);
+      if (attempt.method === "generateImages") {
+        const response = await (ai as any).models.generateImages({
+          model: attempt.model,
+          prompt: prompt,
+          config: { numberOfImages: 1, aspectRatio: "1:1" },
+        });
+        if (response.generatedImages?.[0]?.imageBytes) {
+          return `data:image/png;base64,${response.generatedImages[0].imageBytes}`;
+        }
+      } else {
+        const parts: any[] = [];
+        if (params.customMedia) {
+          const base64Data = params.customMedia.split(",")[1];
+          const mimeType = params.customMedia.split(";")[0].split(":")[1];
+          parts.push({ inlineData: { data: base64Data, mimeType: mimeType } });
+        }
+        parts.push({ text: prompt });
+
+        const response = await ai.models.generateContent({
+          model: attempt.model,
+          contents: { parts: parts },
+        });
+
+        const imagePart = response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+        if (imagePart?.inlineData) {
+          return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+        }
       }
-    }
-
-    // Fallback to generateContent if generateImages fails or returns empty
-    throw new Error("No image generated with imagen-3.0-generate-001");
-  } catch (err) {
-    console.error("Error with generateImages, falling back to generateContent:", err);
-
-    const parts: any[] = [];
-    let prompt = `Génère une image romantique de haute qualité pour une déclaration d'amour.
-    Thème: ${params.theme}.
-    Style artistique: ${params.style}.
-    Police d'écriture suggérée pour l'ambiance: ${params.font}.
-    Contexte: Une scène romantique montrant ${params.receiver} et ${params.sender}.
-    Message à inclure visuellement ou suggérer: "${params.message}".
-    Ambiance: Chaleureuse, émotionnelle.
-    Format: Carré (1:1), idéal pour Instagram.`;
-
-    if (params.customMedia) {
-      const base64Data = params.customMedia.split(",")[1];
-      const mimeType = params.customMedia.split(";")[0].split(":")[1];
-
-      parts.push({
-        inlineData: {
-          data: base64Data,
-          mimeType: mimeType,
-        },
-      });
-      prompt += ` UTILISE CETTE IMAGE COMME RÉFÉRENCE VISUELLE. Intègre les personnes ou l'ambiance de cette image dans la nouvelle création romantique tout en respectant le style ${params.style}.`;
-    }
-
-    parts.push({ text: prompt });
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: {
-        parts: parts,
-      },
-    });
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
+    } catch (err: any) {
+      console.warn(`Failed with ${attempt.model}:`, err.message);
+      lastError = err;
+      // If it's a 401/Auth error, don't bother trying other models
+      if (err.message?.includes("API key") || err.message?.includes("auth") || err.message?.includes("401") || err.message?.includes("403")) {
+        throw err;
       }
     }
   }
-  return null;
+
+  throw lastError || new Error("Échec de la génération avec tous les modèles disponibles.");
 };
 
 export const generateLoveVideo = async (
@@ -108,51 +100,49 @@ export const generateLoveVideo = async (
   Ambiance: Amour pur, tendresse. 
   Format: Portrait (9:16), idéal pour TikTok ou Reels.`;
 
-  const config: any = {
-    numberOfVideos: 1,
-    resolution: "1080p",
-    aspectRatio: "9:16",
-  };
+  const models = ["veo-3.1-lite-generate-preview", "veo-3.1-generate-preview", "veo-001"];
+  let lastError: any = null;
 
-  const videoParams: any = {
-    model: "veo-001",
-    prompt: prompt,
-    config: config,
-  };
+  for (const modelName of models) {
+    try {
+      console.log(`Trying video generation with ${modelName}...`);
+      const videoParams: any = {
+        model: modelName,
+        prompt: prompt,
+        config: { numberOfVideos: 1, resolution: "1080p", aspectRatio: "9:16" },
+      };
 
-  if (params.customMedia) {
-    const base64Data = params.customMedia.split(",")[1];
-    const mimeType = params.customMedia.split(";")[0].split(":")[1];
-    
-    videoParams.image = {
-      imageBytes: base64Data,
-      mimeType: mimeType,
-    };
-    videoParams.prompt += ` Utilise l'image fournie comme point de départ ou référence visuelle pour la vidéo en appliquant un style ${params.style}.`;
-  }
+      if (params.customMedia) {
+        const base64Data = params.customMedia.split(",")[1];
+        const mimeType = params.customMedia.split(";")[0].split(":")[1];
+        videoParams.image = { imageBytes: base64Data, mimeType: mimeType };
+      }
 
-  try {
-    let operation = await (ai as any).models.generateVideos(videoParams);
+      let operation = await (ai as any).models.generateVideos(videoParams);
 
-    while (!operation.done) {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      operation = await ai.operations.getVideosOperation({ operation: (operation as any).name || operation });
+      while (!operation.done) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        operation = await ai.operations.getVideosOperation({ operation: (operation as any).name || operation });
+      }
+
+      const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+      if (downloadLink) {
+        const response = await fetch(downloadLink, {
+          method: "GET",
+          headers: { "x-goog-api-key": apiKey },
+        });
+        if (!response.ok) throw new Error(`Erreur lors du téléchargement de la vidéo: ${response.status}`);
+        const blob = await response.blob();
+        return URL.createObjectURL(blob);
+      }
+    } catch (err: any) {
+      console.warn(`Failed video with ${modelName}:`, err.message);
+      lastError = err;
+      if (err.message?.includes("API key") || err.message?.includes("auth") || err.message?.includes("401") || err.message?.includes("403")) {
+        throw err;
+      }
     }
-
-    const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-    if (!downloadLink) return null;
-
-    const response = await fetch(downloadLink, {
-      method: "GET",
-      headers: {
-        "x-goog-api-key": apiKey,
-      },
-    });
-
-    const blob = await response.blob();
-    return URL.createObjectURL(blob);
-  } catch (err) {
-    console.error("Error generating video:", err);
-    throw err;
   }
-};
+
+  throw lastError || new Error("Échec de la génération vidéo avec tous les modèles disponibles.");
+}

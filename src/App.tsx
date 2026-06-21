@@ -166,16 +166,18 @@ export default function App() {
   };
 
   const handleShare = () => {
-    const url = window.location.href;
-    navigator.clipboard.writeText(url);
-    
-    const today = new Date().toDateString();
-    if (!hasSharedToday) {
-      alert("Lien copié ! Merci du partage. Vous avez débloqué la gratuité pour vos photos personnelles aujourd'hui !");
+    try {
+      const url = window.location.href;
+      navigator.clipboard.writeText(url);
+
+      const today = new Date().toDateString();
       localStorage.setItem("mapendo_shared_date", today);
       setHasSharedToday(true);
-    } else {
-      alert("Lien copié ! Merci de continuer à nous soutenir.");
+      setError(null);
+    } catch (err) {
+      console.error("Share failed:", err);
+      const today = new Date().toDateString();
+      setHasSharedToday(true);
     }
   };
 
@@ -186,17 +188,11 @@ export default function App() {
     }
 
     // Logic for free vs paid
-    // Images inserted by client (customMedia) are free IF shared today
-    // OR if user is Premium
-    const isFreeGeneration = (params.customMedia && hasSharedToday) || isPremium;
+    // Generations are free if the user has shared the app today OR is Premium
+    const isFreeGeneration = hasSharedToday || isPremium;
 
     if (!isFreeGeneration) {
       setShowPaymentModal(true);
-      return;
-    }
-
-    if (params.type === "video" && !hasApiKey) {
-      setError("Une clé API est requise pour générer des vidéos.");
       return;
     }
 
@@ -205,21 +201,34 @@ export default function App() {
     setResultUrl(null);
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
+      // Priority: 1. window.aistudio (if available), 2. process.env
+      let apiKey = process.env.GEMINI_API_KEY;
 
-      if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey === "undefined" || apiKey === "") {
-        setError("La clé API Gemini est manquante ou invalide. Veuillez configurer votre clé dans le panneau Secrets d'AI Studio.");
-        setIsGenerating(false);
-        return;
+      if ((window as any).aistudio?.getSelectedApiKey) {
+        try {
+          const platformKey = await (window as any).aistudio.getSelectedApiKey();
+          if (platformKey) apiKey = platformKey;
+        } catch (e) {
+          console.warn("Failed to get key from platform:", e);
+        }
       }
 
-      const ai = new GoogleGenAI({ apiKey });
+      if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey === "undefined" || apiKey === "") {
+        console.warn("Gemini API key is missing or placeholder:", apiKey);
+        if (!hasApiKey) {
+          setError("La clé API Gemini est manquante. Veuillez configurer votre clé dans le panneau Secrets d'AI Studio.");
+          setIsGenerating(false);
+          return;
+        }
+      }
+
+      const ai = new GoogleGenAI({ apiKey: apiKey || "" });
 
       let url: string | null = null;
       if (params.type === "image") {
-        url = await generateLoveImage(ai, params, apiKey);
+        url = await generateLoveImage(ai, params, apiKey || "");
       } else {
-        url = await generateLoveVideo(ai, params, apiKey);
+        url = await generateLoveVideo(ai, params, apiKey || "");
       }
 
       if (url) {
