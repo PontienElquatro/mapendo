@@ -27,11 +27,10 @@ export const generateLoveImage = async (
   Format: Carré (1:1), idéal pour Instagram. ${params.customMedia ? "Utilise l'image fournie comme référence visuelle." : ""}`;
 
   const attempts = [
-    { model: "imagen-3.0-generate-001", method: "generateImages" },
     { model: "gemini-2.5-flash-image", method: "generateContent" },
-    { model: "gemini-2.0-flash", method: "generateContent" },
-    { model: "gemini-1.5-flash", method: "generateContent" },
-    { model: "gemini-1.5-flash-8b", method: "generateContent" }
+    { model: "gemini-2.5-flash", method: "generateContent" },
+    { model: "gemini-3.5-flash", method: "generateContent" },
+    { model: "gemini-2.0-flash", method: "generateContent" }
   ];
 
   let lastError: any = null;
@@ -39,38 +38,26 @@ export const generateLoveImage = async (
   for (const attempt of attempts) {
     try {
       console.log(`Trying image generation with ${attempt.model}...`);
-      if (attempt.method === "generateImages") {
-        const response = await (ai as any).models.generateImages({
-          model: attempt.model,
-          prompt: prompt,
-          config: { numberOfImages: 1, aspectRatio: "1:1" },
-        });
-        if (response.generatedImages?.[0]?.imageBytes) {
-          return `data:image/png;base64,${response.generatedImages[0].imageBytes}`;
-        }
-      } else {
-        const parts: any[] = [];
-        if (params.customMedia) {
-          const base64Data = params.customMedia.split(",")[1];
-          const mimeType = params.customMedia.split(";")[0].split(":")[1];
-          parts.push({ inlineData: { data: base64Data, mimeType: mimeType } });
-        }
-        parts.push({ text: prompt });
+      const parts: any[] = [];
+      if (params.customMedia) {
+        const base64Data = params.customMedia.split(",")[1];
+        const mimeType = params.customMedia.split(";")[0].split(":")[1];
+        parts.push({ inlineData: { data: base64Data, mimeType: mimeType } });
+      }
+      parts.push({ text: prompt });
 
-        const response = await ai.models.generateContent({
-          model: attempt.model,
-          contents: { parts: parts },
-        });
+      const response = await ai.models.generateContent({
+        model: attempt.model,
+        contents: { parts: parts },
+      });
 
-        const imagePart = response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
-        if (imagePart?.inlineData) {
-          return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
-        }
+      const imagePart = response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+      if (imagePart?.inlineData) {
+        return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
       }
     } catch (err: any) {
       console.warn(`Failed with ${attempt.model}:`, err.message);
       lastError = err;
-      // If it's a 401/Auth error, don't bother trying other models
       if (err.message?.includes("API key") || err.message?.includes("auth") || err.message?.includes("401") || err.message?.includes("403")) {
         throw err;
       }
@@ -100,7 +87,7 @@ export const generateLoveVideo = async (
   Ambiance: Amour pur, tendresse. 
   Format: Portrait (9:16), idéal pour TikTok ou Reels.`;
 
-  const models = ["veo-3.1-lite-generate-preview", "veo-3.1-generate-preview", "veo-001"];
+  const models = ["veo-3.1-lite-generate-preview", "veo-3.1-generate-preview"];
   let lastError: any = null;
 
   for (const modelName of models) {
