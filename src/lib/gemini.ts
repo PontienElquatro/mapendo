@@ -43,7 +43,7 @@ export const generateLoveImage = async (
   parts.push({ text: prompt });
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-image",
+    model: "gemini-2.0-flash",
     contents: {
       parts: parts,
     },
@@ -88,7 +88,7 @@ export const generateLoveVideo = async (
   };
 
   const videoParams: any = {
-    model: "veo-3.1-lite-generate-preview",
+    model: "veo-3.1-generate-preview",
     prompt: prompt,
     config: config,
   };

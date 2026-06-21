@@ -205,7 +205,14 @@ export default function App() {
     setResultUrl(null);
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY || "";
+      const apiKey = process.env.GEMINI_API_KEY;
+
+      if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+        setError("La clé API Gemini est manquante. Veuillez configurer votre clé dans le panneau Secrets d'AI Studio.");
+        setIsGenerating(false);
+        return;
+      }
+
       const ai = new GoogleGenAI({ apiKey });
 
       let url: string | null = null;
