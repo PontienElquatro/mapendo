@@ -201,8 +201,8 @@ export default function App() {
     setResultUrl(null);
 
     try {
-      // Priority: 1. window.aistudio (if available), 2. process.env
-      let apiKey = process.env.GEMINI_API_KEY;
+      // Priority: 1. window.aistudio (if available), 2. import.meta.env, 3. process.env
+      let apiKey = (import.meta.env.VITE_GEMINI_API_KEY as string) || (process.env.GEMINI_API_KEY as string);
 
       if ((window as any).aistudio?.getSelectedApiKey) {
         try {
@@ -215,14 +215,12 @@ export default function App() {
 
       if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey === "undefined" || apiKey === "") {
         console.warn("Gemini API key is missing or placeholder:", apiKey);
-        if (!hasApiKey) {
-          setError("La clé API Gemini est manquante. Veuillez configurer votre clé dans le panneau Secrets d'AI Studio.");
-          setIsGenerating(false);
-          return;
-        }
+        setError("Clé API Gemini manquante. Veuillez vérifier votre fichier .env ou le panneau Secrets d'AI Studio.");
+        setIsGenerating(false);
+        return;
       }
 
-      const ai = new GoogleGenAI({ apiKey: apiKey || "" });
+      const ai = new GoogleGenAI({ apiKey: apiKey });
 
       let url: string | null = null;
       if (params.type === "image") {
@@ -238,8 +236,9 @@ export default function App() {
       }
     } catch (err: any) {
       console.error("Generation error details:", err);
+      const rawError = err.message || JSON.stringify(err);
       if (err.message?.includes("Requested entity was not found") || err.message?.includes("404")) {
-        setError("Modèle ou ressource non trouvée (404). Vérifiez la configuration de votre projet.");
+        setError(`Modèle ou ressource non trouvée (404): ${rawError}`);
       } else if (err.message?.includes("API key") || err.message?.includes("auth") || err.message?.includes("401")) {
         setHasApiKey(false);
         setError("Clé API manquante ou invalide. Veuillez configurer votre clé dans AI Studio.");
