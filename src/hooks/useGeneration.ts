@@ -27,17 +27,34 @@ export const useGeneration = () => {
     setError(null);
     setResultUrl(null);
 
-    const result = await geminiService.generate(params);
+    try {
+      const result = await geminiService.generate(params);
 
-    if (result.error) {
-      setError(result.error);
-    } else if (result.url) {
-      setResultUrl(result.url);
-    } else {
-      setError("An unexpected error occurred.");
+      if (result.error) {
+        // BLOQUANT 6: Robust error handling
+        handleServiceError(result.error);
+      } else if (result.url) {
+        setResultUrl(result.url);
+      }
+    } catch (err: any) {
+      setError("Connexion perdue. Veuillez vérifier votre réseau.");
+    } finally {
+      setIsGenerating(false);
     }
+  };
 
-    setIsGenerating(false);
+  const handleServiceError = (errMessage: string) => {
+    if (errMessage.includes("429") || errMessage.toLowerCase().includes("quota")) {
+      setError("Quota atteint. Veuillez réessayer plus tard.");
+    } else if (errMessage.includes("503") || errMessage.includes("500")) {
+      setError("Service temporairement indisponible.");
+    } else if (errMessage.includes("408") || errMessage.toLowerCase().includes("timeout")) {
+      setError("La requête a mis trop de temps. Veuillez réessayer.");
+    } else if (errMessage.includes("401") || errMessage.includes("403")) {
+      setError("Erreur d'authentification. Contactez le support.");
+    } else {
+      setError("Une erreur est survenue lors de la génération.");
+    }
   };
 
   return {

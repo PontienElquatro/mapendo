@@ -7,16 +7,25 @@ interface UploadZoneProps {
   onRemove: () => void;
 }
 
+const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+
 export const UploadZone = ({ preview, onUpload, onRemove }: UploadZoneProps) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        alert("Le fichier est trop volumineux (max 5Mo)");
+      // BLOQUANT 5: Validation Frontend
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        alert("Format non autorisé. Utilisez JPG, PNG ou WEBP.");
         return;
       }
+      if (file.size > MAX_SIZE) {
+        alert("Fichier trop volumineux. La taille maximale est de 5Mo.");
+        return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = () => {
         onUpload(reader.result as string);
@@ -43,7 +52,7 @@ export const UploadZone = ({ preview, onUpload, onRemove }: UploadZoneProps) => 
             type="file"
             ref={fileInputRef}
             onChange={handleFile}
-            accept="image/jpeg,image/png,image/webp"
+            accept=".jpg,.jpeg,.png,.webp"
             className="hidden"
           />
         </div>
