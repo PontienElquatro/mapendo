@@ -9,7 +9,10 @@ const logger = pino({
 });
 
 const apiKey = process.env.GEMINI_API_KEY;
-// For @google/genai 1.48.0+, use object constructor
+if (!apiKey) {
+  logger.error("GEMINI_API_KEY environment variable is not set");
+}
+
 const genAI = new GoogleGenAI({ apiKey: apiKey || "" });
 
 const MAX_MESSAGE_LENGTH = 1000;
@@ -27,7 +30,9 @@ const limiter = rateLimit({
   message: { error: "Trop de requêtes, veuillez réessayer plus tard." }
 });
 
-app.post('/api/generate', limiter, async (req: any, res: any) => {
+// In Vercel, the handler can be at the root of the file or in an express app.
+// We handle both potential paths.
+app.post(['/', '/api/generate'], limiter, async (req: any, res: any) => {
   const { sender, receiver, message, type, customMedia } = req.body;
 
   if (!sender || !receiver || !message) {
@@ -85,11 +90,10 @@ app.post('/api/generate', limiter, async (req: any, res: any) => {
 async function generateImage(params: any, signal: AbortSignal) {
   const prompt = generateImagePrompt(params);
 
-  // Official image-capable models from probe
+  // Confirmed models from probe
   const models = [
     "gemini-2.5-flash-image",
-    "gemini-3.1-flash-image",
-    "imagen-4.0-generate-001"
+    "gemini-3.1-flash-image"
   ];
 
   let lastError = null;
@@ -105,13 +109,12 @@ async function generateImage(params: any, signal: AbortSignal) {
       }
       parts.push({ text: prompt });
 
-      // Correct pattern for v1.48.0+: genAI.models.generateContent
-      const result = await (genAI as any).models.generateContent({
+      const result = await genAI.models.generateContent({
         model: modelName,
         contents: [{ role: "user", parts }]
-      }, { signal });
+      });
 
-      const response = result.response;
+      const response = result;
       const candidates = response.candidates || [];
       const imagePart = candidates[0]?.content?.parts?.find((p: any) => p.inlineData);
 
@@ -121,10 +124,19 @@ async function generateImage(params: any, signal: AbortSignal) {
     } catch (err: any) {
       logger.warn({ model: modelName, error: err.message }, "Model failed");
       lastError = err;
+      // If unauthorized or forbidden, don't retry other models
       if (err.status === 401 || err.status === 403) throw err;
     }
   }
   throw lastError || new Error("Image generation failed with all models");
+}
+
+// Support local development
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  const port = process.env.PORT || 3001;
+  app.listen(port, () => {
+    logger.info(`Backend server running on http://localhost:${port}`);
+  });
 }
 
 export default app;
