@@ -30,8 +30,6 @@ const limiter = rateLimit({
   message: { error: "Trop de requêtes, veuillez réessayer plus tard." }
 });
 
-// In Vercel, the handler can be at the root of the file or in an express app.
-// We handle both potential paths.
 app.post(['/', '/api/generate'], limiter, async (req: any, res: any) => {
   const { sender, receiver, message, type, customMedia } = req.body;
 
@@ -79,9 +77,15 @@ app.post(['/', '/api/generate'], limiter, async (req: any, res: any) => {
     }
 
     const status = error.status || 500;
-    const errMessage = error.message || "Internal Server Error";
+    let errMessage = error.message || "Internal Server Error";
+    try {
+        const parsed = JSON.parse(errMessage);
+        if (parsed.error?.message) {
+            errMessage = parsed.error.message;
+        }
+    } catch (e) {}
 
-    logger.error({ status, errMessage }, "Generation error");
+    logger.error({ status, errMessage, originalError: error.message }, "Generation error");
 
     return res.status(status).json({ error: errMessage });
   }
@@ -90,10 +94,12 @@ app.post(['/', '/api/generate'], limiter, async (req: any, res: any) => {
 async function generateImage(params: any, signal: AbortSignal) {
   const prompt = generateImagePrompt(params);
 
-  // Confirmed models from probe
+  // Use real available models. Imagen 3 is preferred for image generation.
+  // Gemini 2.0 Flash is a fallback that might support image generation via tools or exp features.
   const models = [
-    "gemini-2.5-flash-image",
-    "gemini-3.1-flash-image"
+    "imagen-3.0-generate-001",
+    "imagen-3.0-fast-001",
+    "gemini-2.0-flash"
   ];
 
   let lastError = null;
@@ -102,30 +108,58 @@ async function generateImage(params: any, signal: AbortSignal) {
     try {
       logger.info({ model: modelName }, "Attempting generation");
 
-      const parts: any[] = [];
-      if (params.customMedia) {
-        const matches = params.customMedia.match(/^data:([^;]+);base64,(.+)$/);
-        parts.push({ inlineData: { data: matches[2], mimeType: matches[1] } });
-      }
-      parts.push({ text: prompt });
+      if (modelName.startsWith("imagen-")) {
+        const result = await genAI.models.generateImages({
+          model: modelName,
+          prompt: prompt,
+          config: {
+            numberOfImages: 1,
+            aspectRatio: "1:1",
+            safetyFilterLevel: "BLOCK_ONLY_HIGH",
+            personGeneration: "ALLOW_ALL"
+          }
+        });
 
-      const result = await genAI.models.generateContent({
-        model: modelName,
-        contents: [{ role: "user", parts }]
-      });
+        const generatedImage = result.generatedImages?.[0];
+        if (generatedImage?.image?.imageBytes) {
+          const mimeType = generatedImage.image.mimeType || "image/png";
+          return `data:${mimeType};base64,${generatedImage.image.imageBytes}`;
+        }
 
-      const response = result;
-      const candidates = response.candidates || [];
-      const imagePart = candidates[0]?.content?.parts?.find((p: any) => p.inlineData);
+        if (generatedImage?.raiFilteredReason) {
+            throw new Error(`Content filtered: ${generatedImage.raiFilteredReason}`);
+        }
+      } else {
+        // Fallback for Gemini models
+        const parts: any[] = [];
+        if (params.customMedia) {
+          const matches = params.customMedia.match(/^data:([^;]+);base64,(.+)$/);
+          if (matches) {
+            parts.push({ inlineData: { data: matches[2], mimeType: matches[1] } });
+          }
+        }
+        parts.push({ text: prompt });
 
-      if (imagePart?.inlineData) {
-        return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+        const result = await genAI.models.generateContent({
+          model: modelName,
+          contents: [{ role: "user", parts }]
+        });
+
+        // Check for inlineData in response (image bytes)
+        const imagePart = result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+        if (imagePart?.inlineData) {
+          return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+        }
+
+        if (result.text) {
+            logger.warn({ model: modelName }, "Model returned text instead of image");
+            throw new Error("Le modèle a retourné du texte au lieu d'une image. Essayez un autre thème.");
+        }
       }
     } catch (err: any) {
       logger.warn({ model: modelName, error: err.message }, "Model failed");
       lastError = err;
-      // If unauthorized or forbidden, don't retry other models
-      if (err.status === 401 || err.status === 403) throw err;
+      if (err.status === 401 || err.status === 403 || err.status === 400) throw err;
     }
   }
   throw lastError || new Error("Image generation failed with all models");
