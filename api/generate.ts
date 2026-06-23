@@ -1,176 +1,165 @@
 import { GoogleGenAI } from "@google/genai";
-import pino from 'pino';
-import { generateImagePrompt } from '../src/utils/prompts';
-import rateLimit from 'express-rate-limit';
 import express from 'express';
-
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-});
-
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) {
-  logger.error("GEMINI_API_KEY environment variable is not set");
-}
-
-const genAI = new GoogleGenAI({ apiKey: apiKey || "" });
 
 const MAX_MESSAGE_LENGTH = 1000;
 const MAX_MEDIA_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
+// Inlined prompt generation to avoid any relative import issues in serverless bundle
+function generateImagePrompt(params: any) {
+  return `Génère une image romantique de qualité exceptionnelle pour une déclaration d'amour.
+
+  Détails de la scène :
+  - Destinataire : ${params.receiver}
+  - Expéditeur : ${params.sender}
+  - Thème visuel : ${params.theme}
+  - Style artistique : ${params.style}
+  - Ambiance suggérée par la police : ${params.font}
+
+  Contenu émotionnel :
+  Le message "${params.message}" doit être l'inspiration centrale.
+  Capture une atmosphère de tendresse, de passion et de sincérité.
+
+  Directives techniques :
+  - Ultra-réaliste avec des détails minutieux
+  - Éclairage cinématographique (soft bokeh, golden hour rays)
+  - Résolution 4K, composition professionnelle (règle des tiers)
+  - Couleurs riches et harmonieuses adaptées au thème ${params.theme}
+  - Format carré 1:1 optimisé pour les réseaux sociaux de haute qualité
+
+  ${params.customMedia ? "IMPORTANT : Utilise l'image fournie en référence pour conserver la cohérence visuelle des visages ou de l'environnement." : ""}
+
+  REMARQUE : Ne pas inclure de texte déformé ou illisible. Privilégier la suggestion visuelle du message par l'émotion des personnages et la symbolique du décor.`;
+}
+
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Trop de requêtes, veuillez réessayer plus tard." }
-});
-
-app.post(['/', '/api/generate'], limiter, async (req: any, res: any) => {
-  const { sender, receiver, message, type, customMedia } = req.body;
-
-  if (!sender || !receiver || !message) {
-    return res.status(400).json({ error: "Missing required fields" });
-  }
-
-  if (message.length > MAX_MESSAGE_LENGTH) {
-    return res.status(400).json({ error: "Message too long" });
-  }
-
-  if (customMedia) {
-    const matches = customMedia.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
-    if (!matches) {
-      return res.status(400).json({ error: "Invalid media format" });
-    }
-    const mimeType = matches[1];
-    const base64Data = matches[2];
-    const size = Buffer.from(base64Data, 'base64').length;
-
-    if (size > MAX_MEDIA_SIZE) {
-      return res.status(400).json({ error: "Media file too large (max 5MB)" });
-    }
-    if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
-      return res.status(400).json({ error: "Unsupported media type" });
-    }
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000);
-
+app.post('*', async (req, res) => {
+  console.log("Processing image generation request...");
   try {
-    if (type === 'image') {
-      const url = await generateImage(req.body, controller.signal);
-      clearTimeout(timeoutId);
-      return res.status(200).json({ url });
-    } else {
-      clearTimeout(timeoutId);
-      return res.status(501).json({ error: "Génération vidéo non implémentée" });
-    }
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      return res.status(408).json({ error: "Request Timeout" });
+    const { sender, receiver, message, type, customMedia } = req.body || {};
+
+    // 1. Validation (Matches expected test output)
+    if (!sender || !receiver || !message) {
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const status = error.status || 500;
-    let errMessage = error.message || "Internal Server Error";
-    try {
-        const parsed = JSON.parse(errMessage);
-        if (parsed.error?.message) {
-            errMessage = parsed.error.message;
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({ error: "Message too long" });
+    }
+
+    // 2. API Key Check
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error("GEMINI_API_KEY is not set in environment");
+      return res.status(401).json({ error: "Clé API manquante sur le serveur." });
+    }
+
+    // 3. Media Validation
+    if (customMedia) {
+      const matches = customMedia.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+      if (matches) {
+        const mimeType = matches[1];
+        const base64Data = matches[2];
+        const size = Buffer.from(base64Data, 'base64').length;
+
+        if (size > MAX_MEDIA_SIZE) {
+          return res.status(400).json({ error: "Image trop lourde (max 5Mo)." });
         }
-    } catch (e) {}
-
-    logger.error({ status, errMessage, originalError: error.message }, "Generation error");
-
-    return res.status(status).json({ error: errMessage });
-  }
-});
-
-async function generateImage(params: any, signal: AbortSignal) {
-  const prompt = generateImagePrompt(params);
-
-  // Use real available models. Imagen 3 is preferred for image generation.
-  // Gemini 2.0 Flash is a fallback that might support image generation via tools or exp features.
-  const models = [
-    "imagen-3.0-generate-001",
-    "imagen-3.0-fast-001",
-    "gemini-2.0-flash"
-  ];
-
-  let lastError = null;
-
-  for (const modelName of models) {
-    try {
-      logger.info({ model: modelName }, "Attempting generation");
-
-      if (modelName.startsWith("imagen-")) {
-        const result = await genAI.models.generateImages({
-          model: modelName,
-          prompt: prompt,
-          config: {
-            numberOfImages: 1,
-            aspectRatio: "1:1",
-            safetyFilterLevel: "BLOCK_ONLY_HIGH",
-            personGeneration: "ALLOW_ALL"
-          }
-        });
-
-        const generatedImage = result.generatedImages?.[0];
-        if (generatedImage?.image?.imageBytes) {
-          const mimeType = generatedImage.image.mimeType || "image/png";
-          return `data:${mimeType};base64,${generatedImage.image.imageBytes}`;
-        }
-
-        if (generatedImage?.raiFilteredReason) {
-            throw new Error(`Content filtered: ${generatedImage.raiFilteredReason}`);
-        }
-      } else {
-        // Fallback for Gemini models
-        const parts: any[] = [];
-        if (params.customMedia) {
-          const matches = params.customMedia.match(/^data:([^;]+);base64,(.+)$/);
-          if (matches) {
-            parts.push({ inlineData: { data: matches[2], mimeType: matches[1] } });
-          }
-        }
-        parts.push({ text: prompt });
-
-        const result = await genAI.models.generateContent({
-          model: modelName,
-          contents: [{ role: "user", parts }]
-        });
-
-        // Check for inlineData in response (image bytes)
-        const imagePart = result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
-        if (imagePart?.inlineData) {
-          return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
-        }
-
-        if (result.text) {
-            logger.warn({ model: modelName }, "Model returned text instead of image");
-            throw new Error("Le modèle a retourné du texte au lieu d'une image. Essayez un autre thème.");
+        if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
+          return res.status(400).json({ error: "Format d'image non supporté." });
         }
       }
-    } catch (err: any) {
-      logger.warn({ model: modelName, error: err.message }, "Model failed");
-      lastError = err;
-      if (err.status === 401 || err.status === 403 || err.status === 400) throw err;
     }
-  }
-  throw lastError || new Error("Image generation failed with all models");
-}
 
-// Support local development
-if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
-  const port = process.env.PORT || 3001;
-  app.listen(port, () => {
-    logger.info(`Backend server running on http://localhost:${port}`);
-  });
-}
+    if (type !== 'image') {
+      return res.status(501).json({ error: "Seule la génération d'images est supportée." });
+    }
+
+    // 4. Generation Logic
+    const genAI = new GoogleGenAI({ apiKey });
+    const prompt = generateImagePrompt(req.body);
+
+    // Models confirmed by probing and project history
+    const models = [
+      "gemini-2.5-flash-image",
+      "imagen-4.0-generate-001",
+      "imagen-3.0-generate-001",
+      "gemini-2.0-flash"
+    ];
+
+    let lastError = null;
+
+    for (const modelName of models) {
+      try {
+        console.log(`Attempting model: ${modelName}`);
+
+        // Try generateImages for models with "image" or "imagen" in their name
+        if (modelName.includes("image") || modelName.includes("imagen")) {
+          try {
+            const result = await genAI.models.generateImages({
+              model: modelName,
+              prompt: prompt,
+              config: {
+                numberOfImages: 1,
+                aspectRatio: "1:1",
+                safetyFilterLevel: "BLOCK_ONLY_HIGH",
+                personGeneration: "ALLOW_ALL"
+              }
+            });
+
+            const img = result.generatedImages?.[0]?.image;
+            if (img?.imageBytes) {
+              console.log(`Successfully generated image with ${modelName} via generateImages`);
+              return res.status(200).json({
+                url: `data:${img.mimeType || "image/png"};base64,${img.imageBytes}`
+              });
+            }
+          } catch (e: any) {
+            console.warn(`generateImages failed for ${modelName}: ${e.message}`);
+            // If it's a 401/403/400, don't just swallow it, might be relevant
+            if (e.status === 401 || e.status === 403 || e.status === 400) throw e;
+          }
+        }
+
+        // Fallback/Standard method: generateContent (inlineData response)
+        const result = await genAI.models.generateContent({
+          model: modelName,
+          contents: [{ role: "user", parts: [{ text: prompt }] }]
+        });
+
+        const imagePart = result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+        if (imagePart?.inlineData?.data) {
+          console.log(`Successfully generated image with ${modelName} via generateContent`);
+          return res.status(200).json({
+            url: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
+          });
+        }
+
+      } catch (err: any) {
+        console.warn(`Model ${modelName} attempt failed:`, err.message);
+        lastError = err;
+        // Don't retry other models if it's an auth or invalid param error
+        if (err.status === 401 || err.status === 403 || err.status === 400) break;
+      }
+    }
+
+    // 5. Final Error Handling
+    const finalStatus = lastError?.status || 500;
+    let finalMessage = lastError?.message || "Impossible de générer l'image.";
+
+    try {
+      const parsed = JSON.parse(finalMessage);
+      if (parsed.error?.message) finalMessage = parsed.error.message;
+    } catch (e) {}
+
+    return res.status(finalStatus).json({ error: finalMessage });
+
+  } catch (globalError: any) {
+    console.error("CRITICAL BACKEND ERROR:", globalError);
+    return res.status(500).json({ error: "Une erreur serveur est survenue." });
+  }
+});
 
 export default app;
