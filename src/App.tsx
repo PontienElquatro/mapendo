@@ -202,19 +202,41 @@ export default function App() {
 
     try {
       // Priority: 1. window.aistudio (if available), 2. import.meta.env, 3. process.env
-      let apiKey = (import.meta.env.VITE_GEMINI_API_KEY as string) || (process.env.GEMINI_API_KEY as string);
+      let apiKeySource = "none";
+      let apiKey = "";
 
       if ((window as any).aistudio?.getSelectedApiKey) {
         try {
           const platformKey = await (window as any).aistudio.getSelectedApiKey();
-          if (platformKey) apiKey = platformKey;
+          if (platformKey && platformKey !== "undefined" && platformKey !== "") {
+            apiKey = platformKey;
+            apiKeySource = "platform (aistudio)";
+          }
         } catch (e) {
           console.warn("Failed to get key from platform:", e);
         }
       }
 
-      if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey === "undefined" || apiKey === "") {
-        console.warn("Gemini API key is missing or placeholder:", apiKey);
+      if (!apiKey) {
+        const envKey = import.meta.env.VITE_GEMINI_API_KEY;
+        if (envKey && envKey !== "undefined" && envKey !== "" && envKey !== "MY_GEMINI_API_KEY") {
+          apiKey = envKey;
+          apiKeySource = "import.meta.env.VITE_GEMINI_API_KEY";
+        }
+      }
+
+      if (!apiKey) {
+        const procKey = process.env.GEMINI_API_KEY;
+        if (procKey && procKey !== "undefined" && procKey !== "" && procKey !== "MY_GEMINI_API_KEY") {
+          apiKey = procKey;
+          apiKeySource = "process.env.GEMINI_API_KEY";
+        }
+      }
+
+      console.log(`Using API key from source: ${apiKeySource}`);
+
+      if (!apiKey) {
+        console.warn("Gemini API key is missing.");
         setError("Clé API Gemini manquante. Veuillez vérifier votre fichier .env ou le panneau Secrets d'AI Studio.");
         setIsGenerating(false);
         return;
@@ -224,7 +246,7 @@ export default function App() {
 
       let url: string | null = null;
       if (params.type === "image") {
-        url = await generateLoveImage(ai, params, apiKey || "");
+        url = await generateLoveImage(ai, params);
       } else {
         url = await generateLoveVideo(ai, params, apiKey || "");
       }

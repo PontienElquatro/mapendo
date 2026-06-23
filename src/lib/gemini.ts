@@ -14,8 +14,7 @@ export const generateLoveImage = async (
     style: string;
     font: string;
     customMedia?: string; // base64 string
-  },
-  apiKey: string
+  }
 ) => {
   const prompt = `Génère une image romantique de haute qualité pour une déclaration d'amour.
   Thème: ${params.theme}.
@@ -27,35 +26,14 @@ export const generateLoveImage = async (
   Format: Carré (1:1), idéal pour Instagram. ${params.customMedia ? "Utilise l'image fournie comme référence visuelle." : ""}`;
 
   // Confirmed models for this environment
-  const models = ["gemini-2.5-flash-image", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-flash-latest", "gemini-pro-vision"];
+  // gemini-2.5-flash-image is preferred for image generation, falling back to flash models
+  const models = ["gemini-2.5-flash-image", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-flash-latest"];
   let lastError: any = null;
 
   for (const modelName of models) {
     try {
       console.log(`Trying image generation with ${modelName}...`);
 
-      const generationParams: any = {
-        model: modelName,
-        prompt: prompt,
-      };
-
-      if (params.customMedia) {
-        const base64Data = params.customMedia.split(",")[1];
-        const mimeType = params.customMedia.split(";")[0].split(":")[1];
-        generationParams.image = { imageBytes: base64Data, mimeType: mimeType };
-      }
-
-      // Try using the specialized generateImages method if available
-      if ((ai as any).models?.generateImages) {
-        const result = await (ai as any).models.generateImages(generationParams);
-        const imageData = result.generatedImages?.[0]?.image?.imageBytes;
-        if (imageData) {
-          return `data:image/png;base64,${imageData}`;
-        }
-      }
-
-      // Fallback to generateContent for multimodal models
-      const model = ai.getGenerativeModel({ model: modelName });
       const parts: any[] = [];
       if (params.customMedia) {
         const base64Data = params.customMedia.split(",")[1];
@@ -64,15 +42,26 @@ export const generateLoveImage = async (
       }
       parts.push({ text: prompt });
 
-      const result = await model.generateContent({ contents: [{ role: "user", parts }] });
-      const imagePart = result.response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+      const result = await (ai as any).models.generateContent({
+          model: modelName,
+          contents: [{ role: "user", parts }]
+      });
+
+      const response = result.response;
+      const candidates = response.candidates || [];
+      const imagePart = candidates[0]?.content?.parts?.find((p: any) => p.inlineData);
 
       if (imagePart?.inlineData) {
         return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
       }
+
+      if (candidates[0]?.content?.parts?.[0]?.text && !imagePart) {
+          console.warn(`Model ${modelName} returned text but no image data.`);
+      }
     } catch (err: any) {
       console.warn(`Failed with ${modelName}:`, err.message);
       lastError = err;
+      // Fail fast on auth errors
       if (err.message?.includes("API key") || err.message?.includes("auth") || err.message?.includes("401") || err.message?.includes("403")) {
         throw err;
       }
