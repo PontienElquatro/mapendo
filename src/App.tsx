@@ -166,16 +166,18 @@ export default function App() {
   };
 
   const handleShare = () => {
-    const url = window.location.href;
-    navigator.clipboard.writeText(url);
-    
-    const today = new Date().toDateString();
-    if (!hasSharedToday) {
-      alert("Lien copié ! Merci du partage. Vous avez débloqué la gratuité pour vos photos personnelles aujourd'hui !");
+    try {
+      const url = window.location.href;
+      navigator.clipboard.writeText(url);
+
+      const today = new Date().toDateString();
       localStorage.setItem("mapendo_shared_date", today);
       setHasSharedToday(true);
-    } else {
-      alert("Lien copié ! Merci de continuer à nous soutenir.");
+      setError(null);
+    } catch (err) {
+      console.error("Share failed:", err);
+      const today = new Date().toDateString();
+      setHasSharedToday(true);
     }
   };
 
@@ -186,17 +188,11 @@ export default function App() {
     }
 
     // Logic for free vs paid
-    // Images inserted by client (customMedia) are free IF shared today
-    // OR if user is Premium
-    const isFreeGeneration = (params.customMedia && hasSharedToday) || isPremium;
+    // Generations are free if the user has shared the app today OR is Premium
+    const isFreeGeneration = hasSharedToday || isPremium;
 
     if (!isFreeGeneration) {
       setShowPaymentModal(true);
-      return;
-    }
-
-    if (params.type === "video" && !hasApiKey) {
-      setError("Une clé API est requise pour générer des vidéos.");
       return;
     }
 
@@ -205,14 +201,54 @@ export default function App() {
     setResultUrl(null);
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY || "";
-      const ai = new GoogleGenAI({ apiKey });
+      // Priority: 1. window.aistudio (if available), 2. import.meta.env, 3. process.env
+      let apiKeySource = "none";
+      let apiKey = "";
+
+      if ((window as any).aistudio?.getSelectedApiKey) {
+        try {
+          const platformKey = await (window as any).aistudio.getSelectedApiKey();
+          if (platformKey && platformKey !== "undefined" && platformKey !== "") {
+            apiKey = platformKey;
+            apiKeySource = "platform (aistudio)";
+          }
+        } catch (e) {
+          console.warn("Failed to get key from platform:", e);
+        }
+      }
+
+      if (!apiKey) {
+        const envKey = import.meta.env.VITE_GEMINI_API_KEY;
+        if (envKey && envKey !== "undefined" && envKey !== "" && envKey !== "MY_GEMINI_API_KEY") {
+          apiKey = envKey;
+          apiKeySource = "import.meta.env.VITE_GEMINI_API_KEY";
+        }
+      }
+
+      if (!apiKey) {
+        const procKey = process.env.GEMINI_API_KEY;
+        if (procKey && procKey !== "undefined" && procKey !== "" && procKey !== "MY_GEMINI_API_KEY") {
+          apiKey = procKey;
+          apiKeySource = "process.env.GEMINI_API_KEY";
+        }
+      }
+
+      console.log(`Using API key from source: ${apiKeySource}`);
+
+      if (!apiKey) {
+        console.warn("Gemini API key is missing.");
+        setError("Clé API Gemini manquante. Veuillez vérifier votre fichier .env ou le panneau Secrets d'AI Studio.");
+        setIsGenerating(false);
+        return;
+      }
+
+      const ai = new GoogleGenAI({ apiKey: apiKey });
 
       let url: string | null = null;
       if (params.type === "image") {
         url = await generateLoveImage(ai, params);
       } else {
-        url = await generateLoveVideo(ai, params);
+        url = await generateLoveVideo(ai, params, apiKey || "");
       }
 
       if (url) {
@@ -221,12 +257,17 @@ export default function App() {
         setError("La génération a échoué. Veuillez réessayer.");
       }
     } catch (err: any) {
-      console.error(err);
-      if (err.message?.includes("Requested entity was not found")) {
+      console.error("Generation error details:", err);
+      const rawError = err.message || JSON.stringify(err);
+      if (err.message?.includes("Requested entity was not found") || err.message?.includes("404")) {
+        setError(`Modèle ou ressource non trouvée (404): ${rawError}`);
+      } else if (err.message?.includes("API key") || err.message?.includes("auth") || err.message?.includes("401")) {
         setHasApiKey(false);
-        setError("Erreur de clé API. Veuillez sélectionner une clé valide.");
+        setError("Clé API manquante ou invalide. Veuillez configurer votre clé dans AI Studio.");
+      } else if (err.message?.includes("quota") || err.message?.includes("429")) {
+        setError("Quota dépassé. Veuillez réessayer plus tard ou utiliser une autre clé.");
       } else {
-        setError("Une erreur est survenue lors de la génération.");
+        setError(`Une erreur est survenue : ${err.message || "Erreur inconnue"}`);
       }
     } finally {
       setIsGenerating(false);
