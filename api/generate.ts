@@ -5,8 +5,11 @@ const MAX_MESSAGE_LENGTH = 1000;
 const MAX_MEDIA_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
-// Inlined prompt generation to avoid any relative import issues in serverless bundle
-function generateImagePrompt(params: any) {
+/**
+ * Inlined prompt generation to avoid relative import issues in serverless.
+ * This makes the function autonomous and avoids ERR_MODULE_NOT_FOUND.
+ */
+function generateImagePrompt(params: any): string {
   return `Génère une image romantique de qualité exceptionnelle pour une déclaration d'amour.
 
   Détails de la scène :
@@ -35,8 +38,8 @@ function generateImagePrompt(params: any) {
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
+// Use a catch-all route to be more resilient to Vercel routing
 app.post('*', async (req, res) => {
-  console.log("Processing image generation request...");
   try {
     const { sender, receiver, message, type, customMedia } = req.body || {};
 
@@ -52,8 +55,8 @@ app.post('*', async (req, res) => {
     // 2. API Key Check
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      console.error("GEMINI_API_KEY is not set in environment");
-      return res.status(401).json({ error: "Clé API manquante sur le serveur." });
+      console.error("GEMINI_API_KEY environment variable is not set");
+      return res.status(401).json({ error: "Clé API Gemini manquante. Veuillez configurer les variables d'environnement." });
     }
 
     // 3. Media Validation
@@ -81,11 +84,10 @@ app.post('*', async (req, res) => {
     const genAI = new GoogleGenAI({ apiKey });
     const prompt = generateImagePrompt(req.body);
 
-    // Models confirmed by probing and project history
+    // Confirmed models for image generation in @google/genai SDK
     const models = [
-      "gemini-2.5-flash-image",
-      "imagen-4.0-generate-001",
       "imagen-3.0-generate-001",
+      "imagen-3.0-fast-001",
       "gemini-2.0-flash"
     ];
 
@@ -93,62 +95,78 @@ app.post('*', async (req, res) => {
 
     for (const modelName of models) {
       try {
-        console.log(`Attempting model: ${modelName}`);
+        console.log(`Attempting generation with model: ${modelName}`);
 
-        // Try generateImages for models with "image" or "imagen" in their name
-        if (modelName.includes("image") || modelName.includes("imagen")) {
-          try {
-            const result = await genAI.models.generateImages({
-              model: modelName,
-              prompt: prompt,
-              config: {
-                numberOfImages: 1,
-                aspectRatio: "1:1",
-                safetyFilterLevel: "BLOCK_ONLY_HIGH",
-                personGeneration: "ALLOW_ALL"
-              }
-            });
-
-            const img = result.generatedImages?.[0]?.image;
-            if (img?.imageBytes) {
-              console.log(`Successfully generated image with ${modelName} via generateImages`);
-              return res.status(200).json({
-                url: `data:${img.mimeType || "image/png"};base64,${img.imageBytes}`
-              });
+        if (modelName.startsWith("imagen-")) {
+          // Correct SDK method for Imagen models
+          const result = await genAI.models.generateImages({
+            model: modelName,
+            prompt: prompt,
+            config: {
+              numberOfImages: 1,
+              aspectRatio: "1:1",
+              safetyFilterLevel: "BLOCK_ONLY_HIGH",
+              personGeneration: "ALLOW_ALL"
             }
-          } catch (e: any) {
-            console.warn(`generateImages failed for ${modelName}: ${e.message}`);
-            // If it's a 401/403/400, don't just swallow it, might be relevant
-            if (e.status === 401 || e.status === 403 || e.status === 400) throw e;
+          });
+
+          const generatedImage = result.generatedImages?.[0];
+          if (generatedImage?.image?.imageBytes) {
+            const mimeType = generatedImage.image.mimeType || "image/png";
+            return res.status(200).json({ url: `data:${mimeType};base64,${generatedImage.image.imageBytes}` });
+          }
+
+          if (generatedImage?.raiFilteredReason) {
+            console.warn(`Model ${modelName} filtered content: ${generatedImage.raiFilteredReason}`);
+            throw new Error(`Contenu filtré par le modèle.`);
+          }
+        } else {
+          // Multimodal fallback for standard Gemini models
+          const parts: any[] = [];
+          if (customMedia) {
+            const matches = customMedia.match(/^data:([^;]+);base64,(.+)$/);
+            if (matches) {
+              parts.push({ inlineData: { data: matches[2], mimeType: matches[1] } });
+            }
+          }
+          parts.push({ text: prompt });
+
+          const result = await genAI.models.generateContent({
+            model: modelName,
+            contents: [{ role: "user", parts }]
+          });
+
+          // Check for image bytes in standard content parts
+          const imagePart = result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+          if (imagePart?.inlineData?.data) {
+            return res.status(200).json({ url: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}` });
+          }
+
+          if (result.text) {
+            console.warn(`Model ${modelName} returned text instead of image`);
+            throw new Error("Le modèle a retourné du texte au lieu d'une image.");
           }
         }
-
-        // Fallback/Standard method: generateContent (inlineData response)
-        const result = await genAI.models.generateContent({
+      } catch (err: any) {
+        // Detailed error logging as requested
+        console.error({
           model: modelName,
-          contents: [{ role: "user", parts: [{ text: prompt }] }]
+          message: err?.message,
+          status: err?.status,
+          stack: err?.stack
         });
 
-        const imagePart = result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
-        if (imagePart?.inlineData?.data) {
-          console.log(`Successfully generated image with ${modelName} via generateContent`);
-          return res.status(200).json({
-            url: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
-          });
-        }
-
-      } catch (err: any) {
-        console.warn(`Model ${modelName} attempt failed:`, err.message);
         lastError = err;
-        // Don't retry other models if it's an auth or invalid param error
+        // Don't retry if it's an auth or client-side bad request
         if (err.status === 401 || err.status === 403 || err.status === 400) break;
       }
     }
 
     // 5. Final Error Handling
     const finalStatus = lastError?.status || 500;
-    let finalMessage = lastError?.message || "Impossible de générer l'image.";
+    let finalMessage = lastError?.message || "Erreur lors de la génération de l'image.";
 
+    // Attempt to extract cleaner message from SDK errors
     try {
       const parsed = JSON.parse(finalMessage);
       if (parsed.error?.message) finalMessage = parsed.error.message;
@@ -158,7 +176,7 @@ app.post('*', async (req, res) => {
 
   } catch (globalError: any) {
     console.error("CRITICAL BACKEND ERROR:", globalError);
-    return res.status(500).json({ error: "Une erreur serveur est survenue." });
+    return res.status(500).json({ error: "Une erreur interne est survenue sur le serveur." });
   }
 });
 
