@@ -11,6 +11,7 @@ export const geminiService = {
       const aiStudioKey = (window as any).aistudio?.getSelectedApiKey?.();
       if (aiStudioKey) {
         headers["x-api-key"] = aiStudioKey;
+        headers["x-goog-api-key"] = aiStudioKey;
       }
 
       const response = await fetch("/api/generate", {

@@ -53,18 +53,22 @@ app.post('*', async (req, res) => {
     }
 
     // 2. API Key Check (Env var or x-api-key header for dynamic environments like AI Studio)
-    const apiKey = process.env.GEMINI_API_KEY || req.headers['x-api-key'] as string;
+    const apiKey = process.env.GEMINI_API_KEY ||
+                   process.env.GOOGLE_API_KEY ||
+                   req.headers['x-api-key'] as string ||
+                   req.headers['x-goog-api-key'] as string;
+
     if (!apiKey) {
       const logEntry = {
         timestamp: new Date().toISOString(),
         level: "ERROR",
         context: "API_KEY_VALIDATION",
-        message: "GEMINI_API_KEY environment variable is not set and no x-api-key header provided"
+        message: "GEMINI_API_KEY/GOOGLE_API_KEY environment variable is not set and no x-api-key header provided"
       };
       console.error(JSON.stringify(logEntry));
       return res.status(401).json({
         error: "AUTHENTICATION_REQUIRED",
-        message: "Clé API Gemini manquante. Veuillez configurer les variables d'environnement."
+        message: "Clé API Gemini manquante. Veuillez configurer GEMINI_API_KEY dans les variables d'environnement Vercel."
       });
     }
 
@@ -100,7 +104,9 @@ app.post('*', async (req, res) => {
       "gemini-2.5-flash-image",
       "imagen-4.0-generate-001",
       "imagen-3.0-generate-001",
-      "imagen-3.0-fast-001"
+      "imagen-3.0-fast-001",
+      "gemini-2.0-flash",
+      "gemini-1.5-flash"
     ];
 
     let lastError = null;
