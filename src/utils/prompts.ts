@@ -1,4 +1,4 @@
-import type { GenerationParams } from "./types.ts";
+import type { GenerationParams } from "./types";
 
 export const generateImagePrompt = (params: GenerationParams) => {
   return `Génère une image romantique de qualité exceptionnelle pour une déclaration d'amour.
