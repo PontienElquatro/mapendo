@@ -10,6 +10,7 @@ export const geminiService = {
       // Check for AI Studio injected API key
       const aiStudioKey = (window as any).aistudio?.getSelectedApiKey?.();
       if (aiStudioKey) {
+        headers["Authorization"] = `Bearer ${aiStudioKey}`;
         headers["x-api-key"] = aiStudioKey;
         headers["x-goog-api-key"] = aiStudioKey;
       }

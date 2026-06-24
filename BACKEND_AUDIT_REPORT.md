@@ -20,10 +20,11 @@
 ## Corrections Appliquées
 
 1. **Chaîne de Fallback Robuste :** Mise en place d'une séquence de modèles vérifiés : `gemini-3.1-flash-image-preview` -> `gemini-2.5-flash-image` -> `imagen-4.0-generate-001` -> `imagen-3.0-generate-001`.
-2. **Logs JSON Structurés :** Tous les logs de génération incluent désormais des métadonnées (horodatage, contexte, modèle, erreurs détaillées).
-3. **Validation de Sécurité :** Vérification systématique de la `GEMINI_API_KEY` (via variable d'env ou header `x-api-key`) avec réponse structurée `AUTHENTICATION_REQUIRED`.
-4. **Correction de Typage :** Utilisation des enums `SafetyFilterLevel.BLOCK_ONLY_HIGH` et `PersonGeneration.ALLOW_ALL` conformément au SDK.
-5. **Gestion d'Erreur Améliorée :** Le fallback continue même en cas d'erreur 400 (Bad Request), permettant de contourner les restrictions régionales de certains modèles.
+2. **Support Vidéo (Veo) :** Implémentation du support pour la génération de vidéos via les modèles `veo-2.0-generate-001` et `veo-2.0-preview-001`.
+3. **Logs JSON Structurés :** Tous les logs de génération incluent désormais des métadonnées (horodatage, contexte, type, modèle, erreurs détaillées).
+4. **Validation de Sécurité Renforcée :** Support multi-sources pour la clé API (env, `Authorization`, `x-api-key`, `x-goog-api-key`) avec diagnostic des headers reçus en cas d'échec.
+5. **Correction de Typage :** Utilisation des enums `SafetyFilterLevel.BLOCK_ONLY_HIGH` et `PersonGeneration.ALLOW_ALL` conformément au SDK.
+6. **Gestion d'Erreur Améliorée :** Le fallback continue même en cas d'erreur 400 (Bad Request), permettant de contourner les restrictions régionales de certains modèles.
 
 ## Résultats de Validation (24 Juin 2026)
 

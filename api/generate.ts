@@ -52,9 +52,13 @@ app.post('*', async (req, res) => {
       return res.status(400).json({ error: "Message too long" });
     }
 
-    // 2. API Key Check (Env var or x-api-key header for dynamic environments like AI Studio)
+    // 2. API Key Check (Env var or headers for dynamic environments like AI Studio)
+    const authHeader = req.headers['authorization'] as string;
+    const bearerKey = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+
     const apiKey = process.env.GEMINI_API_KEY ||
                    process.env.GOOGLE_API_KEY ||
+                   bearerKey ||
                    req.headers['x-api-key'] as string ||
                    req.headers['x-goog-api-key'] as string;
 
@@ -63,51 +67,56 @@ app.post('*', async (req, res) => {
         timestamp: new Date().toISOString(),
         level: "ERROR",
         context: "API_KEY_VALIDATION",
-        message: "GEMINI_API_KEY/GOOGLE_API_KEY environment variable is not set and no x-api-key header provided"
+        message: "Authentication failed: No API key found in process.env or headers.",
+        availableHeaders: Object.keys(req.headers).filter(h => h.toLowerCase().includes('key') || h.toLowerCase().includes('auth'))
       };
       console.error(JSON.stringify(logEntry));
       return res.status(401).json({
         error: "AUTHENTICATION_REQUIRED",
-        message: "Clé API Gemini manquante. Veuillez configurer GEMINI_API_KEY dans les variables d'environnement Vercel."
+        message: "Clé API Gemini manquante. Veuillez configurer GEMINI_API_KEY dans les paramètres Vercel."
       });
     }
 
     // 3. Media Validation
     if (customMedia) {
-      const matches = customMedia.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+      // More relaxed regex for data URIs
+      const matches = customMedia.match(/^data:([^;]+);base64,(.+)$/);
       if (matches) {
         const mimeType = matches[1];
         const base64Data = matches[2];
         const size = Buffer.from(base64Data, 'base64').length;
 
         if (size > MAX_MEDIA_SIZE) {
-          return res.status(400).json({ error: "Image trop lourde (max 5Mo)." });
+          return res.status(400).json({ error: "Média trop lourd (max 5Mo)." });
         }
-        if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
+        if (type === 'image' && !ALLOWED_MIME_TYPES.includes(mimeType)) {
           return res.status(400).json({ error: "Format d'image non supporté." });
         }
       }
     }
 
-    if (type !== 'image') {
-      return res.status(501).json({ error: "Seule la génération d'images est supportée." });
+    if (type !== 'image' && type !== 'video') {
+      return res.status(400).json({ error: "Type de génération non supporté." });
     }
 
     // 4. Generation Logic
     const genAI = new GoogleGenAI({ apiKey });
     const prompt = generateImagePrompt(req.body);
 
-    // Confirmed models for image generation in @google/genai SDK (June 2026 status)
-    // Using exact identifiers from SDK type definitions (genai.d.ts)
-    const models = [
-      "gemini-3.1-flash-image-preview",
-      "gemini-2.5-flash-image",
-      "imagen-4.0-generate-001",
-      "imagen-3.0-generate-001",
-      "imagen-3.0-fast-001",
-      "gemini-2.0-flash",
-      "gemini-1.5-flash"
-    ];
+    let models: string[] = [];
+    if (type === 'video') {
+       models = ["veo-2.0-generate-001", "veo-2.0-preview-001"];
+    } else {
+       models = [
+         "gemini-3.1-flash-image-preview",
+         "gemini-2.5-flash-image",
+         "imagen-4.0-generate-001",
+         "imagen-3.0-generate-001",
+         "imagen-3.0-fast-001",
+         "gemini-2.0-flash",
+         "gemini-1.5-flash"
+       ];
+    }
 
     let lastError = null;
 
@@ -117,10 +126,34 @@ app.post('*', async (req, res) => {
           timestamp: new Date().toISOString(),
           level: "INFO",
           context: "GENERATION_ATTEMPT",
+          type,
           model: modelName
         }));
 
-        if (modelName.startsWith("imagen-")) {
+        if (modelName.startsWith("veo-")) {
+          // Video generation logic
+          const operation = await (genAI.models as any).generateVideos({
+            model: modelName,
+            prompt: prompt
+          });
+
+          // Serverless timeout risk: we check once, but usually videos take longer.
+          // In production, this should be handled via a webhook or long-polling.
+          // For now, we wait a few seconds as a best effort.
+          let result = operation;
+          if (!result.done) {
+             await new Promise(r => setTimeout(r, 5000));
+             result = await (genAI.models as any).get({ name: operation.name });
+          }
+
+          const video = result.response?.generatedVideos?.[0];
+          if (video?.video?.videoBytes) {
+            const mimeType = video.video.mimeType || "video/mp4";
+            return res.status(200).json({ url: `data:${mimeType};base64,${video.video.videoBytes}` });
+          }
+          throw new Error("La génération vidéo est en cours ou a échoué. Veuillez réessayer.");
+
+        } else if (modelName.startsWith("imagen-")) {
           // Correct SDK method for Imagen models
           const result = await genAI.models.generateImages({
             model: modelName,
