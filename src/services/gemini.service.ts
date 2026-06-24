@@ -3,11 +3,19 @@ import { GenerationParams, GenerationResponse } from "../utils/types";
 export const geminiService = {
   generate: async (params: GenerationParams): Promise<GenerationResponse> => {
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      // Check for AI Studio injected API key
+      const aiStudioKey = (window as any).aistudio?.getSelectedApiKey?.();
+      if (aiStudioKey) {
+        headers["x-api-key"] = aiStudioKey;
+      }
+
       const response = await fetch("/api/generate", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify(params),
       });
 

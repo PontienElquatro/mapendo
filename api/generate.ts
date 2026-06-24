@@ -1,7 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import pino from "pino";
-import rateLimit from "express-rate-limit";
-import express from "express";
+import express from 'express';
 
 const MAX_MESSAGE_LENGTH = 1000;
 const MAX_MEDIA_SIZE = 5 * 1024 * 1024; // 5MB
@@ -54,10 +52,10 @@ app.post('*', async (req, res) => {
       return res.status(400).json({ error: "Message too long" });
     }
 
-    // 2. API Key Check
-    const apiKey = process.env.GEMINI_API_KEY;
+    // 2. API Key Check (Env var or x-api-key header for dynamic environments like AI Studio)
+    const apiKey = process.env.GEMINI_API_KEY || req.headers['x-api-key'] as string;
     if (!apiKey) {
-      console.error("GEMINI_API_KEY environment variable is not set");
+      console.error("GEMINI_API_KEY environment variable is not set and no x-api-key header provided");
       return res.status(401).json({ error: "Clé API Gemini manquante. Veuillez configurer les variables d'environnement." });
     }
 
@@ -88,6 +86,8 @@ app.post('*', async (req, res) => {
 
     // Confirmed models for image generation in @google/genai SDK
     const models = [
+      "gemini-2.5-flash-image",
+      "imagen-4.0-generate-001",
       "imagen-3.0-generate-001",
       "imagen-3.0-fast-001",
       "gemini-2.0-flash"
