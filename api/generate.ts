@@ -1,7 +1,5 @@
-import { GoogleGenAI } from "@google/genai";
-import pino from "pino";
-import rateLimit from "express-rate-limit";
-import express from "express";
+import { GoogleGenAI, SafetyFilterLevel, PersonGeneration } from "@google/genai";
+import express from 'express';
 
 const MAX_MESSAGE_LENGTH = 1000;
 const MAX_MEDIA_SIZE = 5 * 1024 * 1024; // 5MB
@@ -54,11 +52,20 @@ app.post('*', async (req, res) => {
       return res.status(400).json({ error: "Message too long" });
     }
 
-    // 2. API Key Check
-    const apiKey = process.env.GEMINI_API_KEY;
+    // 2. API Key Check (Env var or x-api-key header for dynamic environments like AI Studio)
+    const apiKey = process.env.GEMINI_API_KEY || req.headers['x-api-key'] as string;
     if (!apiKey) {
-      console.error("GEMINI_API_KEY environment variable is not set");
-      return res.status(401).json({ error: "Clé API Gemini manquante. Veuillez configurer les variables d'environnement." });
+      const logEntry = {
+        timestamp: new Date().toISOString(),
+        level: "ERROR",
+        context: "API_KEY_VALIDATION",
+        message: "GEMINI_API_KEY environment variable is not set and no x-api-key header provided"
+      };
+      console.error(JSON.stringify(logEntry));
+      return res.status(401).json({
+        error: "AUTHENTICATION_REQUIRED",
+        message: "Clé API Gemini manquante. Veuillez configurer les variables d'environnement."
+      });
     }
 
     // 3. Media Validation
@@ -86,18 +93,26 @@ app.post('*', async (req, res) => {
     const genAI = new GoogleGenAI({ apiKey });
     const prompt = generateImagePrompt(req.body);
 
-    // Confirmed models for image generation in @google/genai SDK
+    // Confirmed models for image generation in @google/genai SDK (June 2026 status)
+    // Using exact identifiers from SDK type definitions (genai.d.ts)
     const models = [
+      "gemini-3.1-flash-image-preview",
+      "gemini-2.5-flash-image",
+      "imagen-4.0-generate-001",
       "imagen-3.0-generate-001",
-      "imagen-3.0-fast-001",
-      "gemini-2.0-flash"
+      "imagen-3.0-fast-001"
     ];
 
     let lastError = null;
 
     for (const modelName of models) {
       try {
-        console.log(`Attempting generation with model: ${modelName}`);
+        console.log(JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: "INFO",
+          context: "GENERATION_ATTEMPT",
+          model: modelName
+        }));
 
         if (modelName.startsWith("imagen-")) {
           // Correct SDK method for Imagen models
@@ -107,8 +122,8 @@ app.post('*', async (req, res) => {
             config: {
               numberOfImages: 1,
               aspectRatio: "1:1",
-              safetyFilterLevel: "BLOCK_ONLY_HIGH",
-              personGeneration: "ALLOW_ALL"
+              safetyFilterLevel: SafetyFilterLevel.BLOCK_ONLY_HIGH,
+              personGeneration: PersonGeneration.ALLOW_ALL
             }
           });
 
@@ -119,7 +134,13 @@ app.post('*', async (req, res) => {
           }
 
           if (generatedImage?.raiFilteredReason) {
-            console.warn(`Model ${modelName} filtered content: ${generatedImage.raiFilteredReason}`);
+            console.warn(JSON.stringify({
+              timestamp: new Date().toISOString(),
+              level: "WARN",
+              context: "CONTENT_FILTERED",
+              model: modelName,
+              reason: generatedImage.raiFilteredReason
+            }));
             throw new Error(`Contenu filtré par le modèle.`);
           }
         } else {
@@ -145,22 +166,33 @@ app.post('*', async (req, res) => {
           }
 
           if (result.text) {
-            console.warn(`Model ${modelName} returned text instead of image`);
+            console.warn(JSON.stringify({
+              timestamp: new Date().toISOString(),
+              level: "WARN",
+              context: "UNEXPECTED_RESPONSE_TYPE",
+              model: modelName,
+              message: "Model returned text instead of image"
+            }));
             throw new Error("Le modèle a retourné du texte au lieu d'une image.");
           }
         }
       } catch (err: any) {
         // Detailed error logging as requested
-        console.error({
+        console.error(JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: "ERROR",
+          context: "MODEL_GENERATION_FAILED",
           model: modelName,
           message: err?.message,
           status: err?.status,
           stack: err?.stack
-        });
+        }));
 
         lastError = err;
-        // Don't retry if it's an auth or client-side bad request
-        if (err.status === 401 || err.status === 403 || err.status === 400) break;
+        // Don't retry if it's an auth error
+        // Note: 400 (Bad Request) is often returned for restricted/unsupported models in specific regions,
+        // so we continue the loop to try the next model in the fallback chain.
+        if (err.status === 401 || err.status === 403) break;
       }
     }
 
@@ -177,8 +209,17 @@ app.post('*', async (req, res) => {
     return res.status(finalStatus).json({ error: finalMessage });
 
   } catch (globalError: any) {
-    console.error("CRITICAL BACKEND ERROR:", globalError);
-    return res.status(500).json({ error: "Une erreur interne est survenue sur le serveur." });
+    console.error(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "FATAL",
+      context: "GLOBAL_ERROR_HANDLER",
+      message: globalError?.message,
+      stack: globalError?.stack
+    }));
+    return res.status(500).json({
+      error: "INTERNAL_SERVER_ERROR",
+      message: "Une erreur interne est survenue sur le serveur."
+    });
   }
 });
 
