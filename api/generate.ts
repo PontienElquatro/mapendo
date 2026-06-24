@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import pino from 'pino';
-import { generateImagePrompt } from '../src/utils/prompts';
+import { generateImagePrompt } from '../src/utils/prompts.ts';
 import rateLimit from 'express-rate-limit';
 import express from 'express';
 
