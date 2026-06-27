@@ -44,7 +44,7 @@ Mapendo utilise un modèle hybride :
 
 ## Dette Technique et Améliorations Futures
 
-1. **Génération Vidéo :** La structure est présente mais l'implémentation côté backend renvoie actuellement un code 501 (Non implémenté).
+1. **Génération Vidéo (Veo) :** L'implémentation est fonctionnelle via les modèles `veo-2.0`. Cependant, elle utilise une attente synchrone peu adaptée au format Serverless (risques de timeout Vercel). Une architecture basée sur des webhooks ou du long-polling serait préférable.
 2. **Paiements :** Le processus de paiement est actuellement une simulation frontend. Une intégration réelle avec un processeur de paiement (Stripe, CinetPay, etc.) est nécessaire.
 3. **Stockage :** Les images générées sont renvoyées sous forme de base64. Pour une mise à l'échelle, un stockage cloud (AWS S3, Vercel Blob) serait préférable.
 4. **Authentification :** Le statut Premium est stocké uniquement dans le `localStorage`, ce qui n'est pas sécurisé pour une application de production.
