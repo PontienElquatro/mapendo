@@ -1,5 +1,6 @@
 import { GoogleGenAI, SafetyFilterLevel, PersonGeneration } from "@google/genai";
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 
 const MAX_MESSAGE_LENGTH = 1000;
 const MAX_MEDIA_SIZE = 5 * 1024 * 1024; // 5MB
@@ -37,6 +38,17 @@ function generateImagePrompt(params: any): string {
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
+
+// Rate limiting to prevent abuse
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 10, // Limit each IP to 10 requests per window
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: "Trop de requêtes. Veuillez réessayer dans 15 minutes." }
+});
+
+app.use(limiter);
 
 // Use a catch-all route to be more resilient to Vercel routing
 app.post('*', async (req, res) => {
